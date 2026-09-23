@@ -9,8 +9,10 @@ One batch per reply. Put the whole batch inside a single code block opened with 
 that file contents can contain ``` fences. Inside it:
 
 - The first line is `=== batch` and the last line is `=== end`.
+- A batch that changes files or runs commands ends with a `=== message` op, right before `=== end`.
 - Each op starts with a header line `=== <op> <arguments>`.
-- Ops that carry content (edit, write, overwrite, patch) take every line up to the next `=== ` header.
+- Ops that carry content (edit, write, overwrite, patch, message) take every line up to the next `=== `
+  header.
 - Arguments are separated by spaces. Quote an argument that contains spaces with '...' or "...".
   Backslashes are literal (regexes don't need double escaping).
 - Paths are relative to the project root, with forward slashes. No absolute paths, no `..`.
@@ -82,6 +84,19 @@ that file contents can contain ``` fences. Inside it:
 - One command per `=== run` line, run with bash in the project root, no stdin, with a timeout. Nothing runs
   interactively, so use non-interactive flags.
 
+## Message: the last op of a batch that changes anything
+
+    === message
+    Add retry with backoff to fetch_page
+
+    fetch_page gave up on the first timeout. It now retries three times.
+
+- Required whenever the batch has a change or a `run` op; a batch without one is rejected as malformed. A
+  batch of only queries needs none.
+- It becomes the commit message for the batch in the project's history, so write it last, as a summary of
+  what the ops above it do: one summary line in the imperative ("Add", "Fix", "Rename"), then optionally a
+  blank line and a body explaining why.
+
 # What happens to a batch
 
 - If any op is malformed (unknown op, bad arguments, broken SEARCH/REPLACE markers, missing `=== end`), the
@@ -89,19 +104,21 @@ that file contents can contain ``` fences. Inside it:
 - A change that fails preflight (SEARCH not found or ambiguous, file missing or already existing) is reported
   with the reason. A SEARCH miss says why: copied line-number prefixes, indentation that differs, or else
   the closest region of the file as a diff. Near misses are never applied.
-- A batch whose `=== end` never arrives is treated as cut off and nothing runs. The operator either
-  applies the passing ops only (the report then says which ops were applied and which were rejected) or
-  sends the report back without applying anything. Either way, resend only what still needs doing,
-  corrected against the files as the report describes them.
+- A batch whose `=== end` never arrives is treated as cut off and rejected; nothing runs. Resend it whole,
+  or split the work into smaller batches.
+- When some ops fail preflight, the operator either applies the passing ops only (the report then says which
+  ops were applied and which were rejected) or sends the report back without applying anything. Either way,
+  resend only what still needs doing, corrected against the files as the report describes them.
 - Never assume anything ran until a report says so.
 
 ## Rejecting and undoing
 
 - The operator can reject a batch instead of applying it, sometimes with a note. Nothing in it was applied
   or run; follow the note.
-- The operator can undo an applied batch. Every file it changed goes back to its exact state before the
-  batch, and files it created are removed. The undo report lists each file. Commands the batch ran are not
-  reversed; if their effects matter, undo them with `run` ops.
+- The operator can undo an applied batch. Every file it changed, including files its commands changed,
+  moved, or created, goes back to its exact state before the batch; files it created are removed. The undo
+  report lists each file. Files ignored by .gitignore and anything outside the project (installed packages,
+  for example) are not reversed; if those effects matter, undo them with `run` ops.
 - Undo refuses while a later batch or the operator has changed the same files, so undoing an older batch
   usually means undoing the newer ones first. After an undo, don't trust your memory of those files: read
   them again before editing.
@@ -140,5 +157,7 @@ from src.app import main
 def test_main_runs():
     main()
 === run python -m pytest -q
+=== message
+Pass the loaded config to run
 === end
 ````

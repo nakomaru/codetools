@@ -1,8 +1,9 @@
 from codetools.protocol import has_batch, parse
 
 
-def batch(*lines: str) -> str:
-    return "\n".join(["=== batch", *lines, "=== end"])
+def batch(*lines: str, message: str | None = "Test batch") -> str:
+    tail = ["=== message", message] if message is not None else []
+    return "\n".join(["=== batch", *lines, *tail, "=== end"])
 
 
 def test_text_without_batch_is_ignored():
@@ -36,7 +37,7 @@ def test_missing_end_is_reported_as_cut_off():
 
 
 def test_indented_batch_is_dedented():
-    text = "1. do this:\n\n    ````\n    === batch\n    === write a.py\n    def f():\n        return 1\n    === end\n    ````"
+    text = "1. do this:\n\n    ````\n    === batch\n    === write a.py\n    def f():\n        return 1\n    === message\n    Add f\n    === end\n    ````"
     parsed = parse(text)
     assert not parsed.errors
     assert parsed.ops[0].args["content"] == ["def f():", "    return 1"]
@@ -117,3 +118,20 @@ def test_run_takes_the_raw_command():
     parsed = parse(batch("=== run python -m pytest -q 'tests/x y.py' && echo done"))
     assert parsed.ops[0].args["command"] == "python -m pytest -q 'tests/x y.py' && echo done"
     assert parsed.ops[0].kind == "command"
+
+
+def test_changes_and_commands_need_a_message_but_queries_do_not():
+    assert not parse(batch("=== read a.py", message=None)).errors
+    for op in ("=== write a.py", "=== run ls"):
+        errors = parse(batch(op, message=None)).errors
+        assert len(errors) == 1 and "must end with `=== message`" in errors[0].message
+
+
+def test_message_is_the_last_op_with_a_summary_and_optional_body():
+    parsed = parse(batch("=== delete old.py", message="Remove old.py\n\nNothing imports it anymore."))
+    assert not parsed.errors and parsed.message == "Remove old.py\n\nNothing imports it anymore."
+    early = parse("=== batch\n=== message\nFirst\n=== delete old.py\n=== end")
+    assert any("must be the last op" in e.message for e in early.errors)
+    assert any("is empty" in e.message for e in parse(batch("=== delete old.py", message="")).errors)
+    inline = parse("=== batch\n=== delete old.py\n=== message Remove it\n=== end")
+    assert any("lines after the header" in e.message for e in inline.errors)

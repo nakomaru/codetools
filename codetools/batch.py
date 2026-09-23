@@ -20,6 +20,7 @@ class Batch:
     source: str
     ops: list[Op]
     errors: list[ParseError]
+    message: str = ""
     status: str = PENDING
     results: dict[int, OpResult] = field(default_factory=dict)
     stage: Stage | None = None
@@ -28,6 +29,11 @@ class Batch:
     runs: dict[int, CommandResult] = field(default_factory=dict)
     partial: bool = False
     report: str = ""
+
+    @property
+    def subject(self) -> str:
+        """The first line of the batch's message."""
+        return self.message.split("\n", 1)[0]
 
     def of_kind(self, kind: str) -> list[Op]:
         return [op for op in self.ops if op.kind == kind]

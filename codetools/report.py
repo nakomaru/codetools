@@ -3,6 +3,7 @@
 import re
 
 from .batch import Batch
+from .history import FileStatus
 from .ops import Op
 from .textfile import plural
 
@@ -100,10 +101,15 @@ def operator_rejected(b: Batch, note: str) -> str:
     return _finish(lines + ([f"Operator note: {note}"] if note else []))
 
 
-def undone(batch_id: int, files: list[tuple[str, bool]]) -> str:
-    lines = [f"{_TAG} batch {batch_id} undone by the operator: {plural(len(files), 'file')} restored to their state "
-             "before it was applied. Commands it ran were not reversed.", ""]
-    lines += [f"- {rel}: {'restored' if existed else 'removed (the batch created it)'}" for rel, existed in files]
+_UNDO_STATUS = {"A": "removed (the batch created it)", "D": "restored (the batch deleted it)"}
+
+
+def undone(batch_id: int, message: str, files: list[FileStatus]) -> str:
+    subject = message.split("\n", 1)[0]
+    lines = [f"{_TAG} batch {batch_id} ({subject}) undone by the operator: {plural(len(files), 'file')} returned to "
+             "their state before it was applied, including changes its commands made. Files ignored by .gitignore "
+             "and anything outside the project were not reversed.", ""]
+    lines += [f"- {f.path}: {_UNDO_STATUS.get(f.status, 'restored')}" for f in files]
     return _finish(lines)
 
 

@@ -24,8 +24,9 @@ directory as the project root, or takes a path: `ct C:\code\myproject`.
 | `settings.yaml` | context contents, command timeout, extra secret patterns | yes |
 | `pins.txt` | files the context always includes in full | yes |
 | `notes.md` | a project brief for the bot: what it is, conventions, how to test | yes |
-| `.gitignore` | keeps `batches/` and `log.txt` out of git | yes |
-| `batches/NNNN/` | every batch: the whole reply, each report, backups, undo manifest | no |
+| `.gitignore` | keeps `batches/`, `log.txt`, and `history.git/` out of git | yes |
+| `batches/NNNN/` | every batch: the whole reply, each report, and its history snapshot ids | no |
+| `history.git/` | a private git repository of snapshots, one commit per applied batch | no |
 | `log.txt` | one timestamped line per event | no |
 
 **2. Brief the bot once per chat.** Type `context`. The clipboard now holds:
@@ -75,8 +76,20 @@ Then choose:
 - **The approach is wrong:** `reject 14 use the existing retry helper instead`. The rejection and your
   note are copied for the bot.
 
-**5. Recover.** `undo 14` restores every file batch 14 changed. It refuses if something changed those
-files since, including a later batch or your own edits. Undo the later batch first.
+**5. Recover.** Every batch that changes files or runs commands ends with a `=== message` op, a commit-style
+summary of what it did. `ct` snapshots the project into `.codetools/history.git` just before applying a
+batch and again after its commands finish, and commits the second snapshot with the batch's message. Edits
+you make between batches get their own commits, so the history is complete:
+
+```
+git --git-dir=.codetools/history.git log --stat
+```
+
+`undo 14` puts back every file batch 14 changed, including moves, deletes, and files its commands created or
+changed. It refuses if something changed those files since, including a later batch or your own edits; undo
+the later batch first. The snapshots follow the project's `.gitignore`, so ignored files (build output,
+`node_modules`) and anything outside the project, such as installed packages, can't be undone. Your real
+repository is never touched.
 
 Every report is self-contained, so always paste only the latest one.
 
@@ -123,7 +136,7 @@ says why a SEARCH missed:
 | `protocol` | copy only the batch format instructions |
 | `apply N` / `applypartial N` | apply batch N (every op must pass / the passing ops only) |
 | `reject N [note]` | discard batch N, copy a rejection with your note |
-| `undo N` | restore the files batch N changed |
+| `undo N` | restore the files batch N and its commands changed |
 | `diff N`, `show N`, `copy N` | redisplay diffs, print the report, re-copy the report |
 | `paste` | ingest the clipboard now (a repeat, or a batch with no `=== end`) |
 | `watch [on\|off]` | toggle clipboard watching |
@@ -149,8 +162,7 @@ projects.
   read, grepped, edited, or pinned, so their contents never reach the chat.
 - Before applying, `ct` checks that every file it's about to touch is unchanged since preflight. If one
   changed, the batch is re-preflighted and you review it again.
-- Files are backed up into the batch's folder before being changed, and a failed write rolls back the
-  whole batch.
+- The project is snapshotted before every batch is applied, and a failed write rolls back the whole batch.
 - Commands run in Git Bash in the project root with no stdin, pagers off, and the timeout from settings. On
   Windows each command runs in a Job Object, so a timeout or `kill` also stops every process it started.
 

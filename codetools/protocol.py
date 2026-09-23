@@ -2,6 +2,8 @@
 
 A batch is the text between a `=== batch` line and an `=== end` line. Text outside those markers (prose, code
 fences) is ignored, so a whole chat reply can be pasted as is. Any malformed op makes the whole batch invalid.
+A batch that changes files or runs commands ends with a `=== message` op, which becomes its history commit
+message.
 
 An op with content may end its header with `<<TAG`; its content then runs until a line that is exactly TAG,
 so the content can hold lines that look like `=== ` headers or batch markers.
@@ -12,7 +14,7 @@ import shlex
 from dataclasses import dataclass, field
 
 from . import config
-from .ops import ALL_VERBS, BODY_VERBS, FilePatch, Hunk, Op
+from .ops import ALL_VERBS, BODY_VERBS, MESSAGE_VERB, FilePatch, Hunk, Op
 from .paths import PathSyntaxError, normalize
 
 _START_RE = re.compile(r"^([ \t]*)=== batch[ \t]*$")
@@ -44,6 +46,7 @@ class ParsedBatch:
     ops: list[Op]
     errors: list[ParseError]
     incomplete: bool = False
+    message: str = ""
 
 
 @dataclass
@@ -135,8 +138,31 @@ def parse(text: str) -> ParsedBatch | None:
         return None
     if not chunks and not errors:
         errors.append(ParseError(None, "batch contains no ops"))
-    ops = _build_ops(chunks, errors)
-    return ParsedBatch("\n".join(source), ops, errors, incomplete)
+    message = _build_message(chunks, errors)
+    ops = _build_ops([c for c in chunks if c.verb != MESSAGE_VERB], errors)
+    if not message and not incomplete and any(op.kind != "query" for op in ops):
+        errors.append(ParseError(None, "a batch that changes files or runs commands must end with `=== message`: "
+                                       "a one-line summary of what the batch did, then an optional body"))
+    return ParsedBatch("\n".join(source), ops, errors, incomplete, message)
+
+
+def _build_message(chunks: list[_Chunk], errors: list[ParseError]) -> str:
+    """The text of the batch's `=== message` op, which must be its last op."""
+    message = ""
+    for n, chunk in enumerate(chunks):
+        if chunk.verb != MESSAGE_VERB:
+            continue
+        where = f"`{_clip(chunk.header)}`"
+        if n != len(chunks) - 1:
+            errors.append(ParseError(chunk.line, f"{where} must be the last op, right before `=== end`"))
+        elif chunk.argstr:
+            errors.append(ParseError(chunk.line, f"{where}: the message goes on the lines after the header"))
+        else:
+            lines = [line for _, line in chunk.body] if chunk.heredoc else _content_lines(chunk.body)
+            message = "\n".join(line.rstrip() for line in lines).strip("\n")
+            if not message.strip():
+                errors.append(ParseError(chunk.line, f"{where} is empty"))
+    return message
 
 
 def _build_ops(chunks: list[_Chunk], errors: list[ParseError]) -> list[Op]:

@@ -5,6 +5,7 @@ clipboard ingest never interleaves with an apply.
 """
 
 import hashlib
+import json
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -15,6 +16,7 @@ from .batch import Batch
 from .changes import preflight
 from .commands import CommandResult, Runner, find_bash
 from .diffs import file_changes
+from .history import History, HistoryError
 from .ops import OpResult
 from .protocol import parse
 from .queries import run_query
@@ -59,6 +61,7 @@ class Engine:
         self._seen: dict[str, int] = {}
         self._lock = threading.RLock()
         self._batches_dir = self.ws.state_dir / "batches"
+        self.history = History(root, self.ws.state_dir / "history.git")
 
     @property
     def root(self) -> Path:
@@ -89,7 +92,7 @@ class Engine:
         with self._lock:
             if key in self._seen and not force:
                 return IngestResult(duplicate_of=self._seen[key])
-            b = Batch(self._next_id(), parsed.source, parsed.ops, parsed.errors)
+            b = Batch(self._next_id(), parsed.source, parsed.ops, parsed.errors, parsed.message)
             self._seen[key] = b.id
             self.batches[b.id] = b
             self._save(b, "reply.txt", text)
@@ -171,8 +174,10 @@ class Engine:
                 raise StaleBatch(f"files changed on disk after preflight: {', '.join(stale)}; batch {b.id} was "
                                  "re-preflighted, review it and apply again", b.report, b)
             try:
-                applier.apply_stage(self.ws, b.stage, self._dir(b.id))
-            except applier.ApplyError as e:
+                before = self.history.snapshot(f"Project state before batch {b.id}")
+                self._save_record(b.id, {"message": b.message, "before": before, "after": None})
+                applier.apply_stage(self.ws, b.stage)
+            except (applier.ApplyError, HistoryError) as e:
                 self._set_report(b, "apply-failed", report.apply_failed(b, str(e)))
                 self._log(b, f"apply failed: {e}")
                 raise EngineError(f"apply failed: {e}", b.report, b) from None
@@ -180,7 +185,7 @@ class Engine:
             b.status = states.APPLIED
             b.partial = bool(failed)
             self.ws.invalidate()
-            self._log(b, f"applied{' partially' if failed else ''}: {len(b.applied_changes)} files changed")
+            self._log(b, f"applied{' partially' if failed else ''}: {len(b.applied_changes)} files changed: {b.subject}")
             for op in b.of_kind("command"):
                 command = op.args["command"]
                 on_event(f"op {op.index}: running {command}", True)
@@ -188,6 +193,12 @@ class Engine:
                 b.runs[op.index] = result
                 self._log(b, f"op {op.index} ran {command!r}: {outcome(result)}, {result.seconds:.1f} s")
                 on_event(f"op {op.index}: {outcome(result)} after {result.seconds:.1f} s", result.exit_code == 0)
+            try:
+                after = self.history.snapshot(f"{b.message}\n\nCodetools-Batch: {b.id}")
+                self._save_record(b.id, {"message": b.message, "before": before, "after": after})
+            except HistoryError as e:
+                self._log(b, f"no snapshot after apply, so it can't be undone: {e}")
+                on_event(f"batch {b.id} can't be undone: {e}", False)
             self._set_report(b, "applied", report.applied(b))
             return b
 
@@ -205,11 +216,11 @@ class Engine:
     def undo(self, batch_id: int) -> str:
         with self._lock:
             try:
-                files = applier.undo(self.ws, self._dir(batch_id))
-            except applier.ApplyError as e:
+                record, files = self._undo(batch_id)
+            except HistoryError as e:
                 raise EngineError(f"can't undo batch {batch_id}: {e}") from None
             self.ws.invalidate()
-            text = report.package(report.undone(batch_id, files), self.settings.fold)
+            text = report.package(report.undone(batch_id, record["message"], files), self.settings.fold)
             b = self.batches.get(batch_id)
             if b is not None:
                 b.status = states.UNDONE
@@ -217,6 +228,32 @@ class Engine:
             self._save_text(batch_id, "report-undone.txt", text)
             self._log_line(f"batch {batch_id} undone: {len(files)} files restored")
             return text
+
+    def _undo(self, batch_id: int) -> tuple[dict, list]:
+        record_path = self._dir(batch_id) / "history.json"
+        if not record_path.is_file():
+            raise HistoryError("that batch was never applied")
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+        if record.get("undone_at"):
+            raise HistoryError("that batch was already undone")
+        if record["after"] is None:
+            raise HistoryError("it has no snapshot from after it was applied")
+        now = self.history.snapshot(f"Project state before undoing batch {batch_id}")
+        files = self.history.changes(record["before"], record["after"])
+        later = {f.path for f in self.history.changes(record["after"], now)}
+        conflicts = [f.path for f in files if f.path in later]
+        if conflicts:
+            raise HistoryError(f"files changed after the batch was applied: {', '.join(conflicts)}")
+        self.history.restore(record["before"], files)
+        applier.prune(self.ws, [f.path for f in files if f.status == "A"], [])
+        subject = record["message"].split("\n", 1)[0]
+        record["undone_at"] = applier.timestamp()
+        record["undo"] = self.history.snapshot(f"Undo batch {batch_id}: {subject}")
+        self._save_record(batch_id, record)
+        return record, files
+
+    def _save_record(self, batch_id: int, record: dict) -> None:
+        self._save_text(batch_id, "history.json", json.dumps(record, indent=2))
 
     def pending_ids(self) -> list[int]:
         return [b.id for b in self.batches.values() if b.status == states.PENDING]

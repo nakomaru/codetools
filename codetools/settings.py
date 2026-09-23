@@ -43,7 +43,7 @@ NOTES_TEMPLATE = """\
      how to run the tests, things to avoid. HTML comments like this one are not sent. -->
 """
 
-GITIGNORE = "batches/\nlog.txt\n"
+GITIGNORE = "batches/\nlog.txt\nhistory.git/\n"
 
 _COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 
@@ -82,7 +82,18 @@ class ProjectState:
             if not path.exists():
                 path.write_text(text, encoding="utf-8", newline="\n")
                 created.append(path.name)
+        self._complete_gitignore()
         return created
+
+    def _complete_gitignore(self) -> None:
+        """Add any entry of GITIGNORE missing from an existing .codetools/.gitignore."""
+        path = self.dir / ".gitignore"
+        text = path.read_text(encoding="utf-8")
+        present = {line.strip() for line in text.splitlines()}
+        missing = [entry for entry in GITIGNORE.splitlines() if entry not in present]
+        if missing:
+            path.write_text(text + ("" if text.endswith("\n") or not text else "\n") + "\n".join(missing) + "\n",
+                            encoding="utf-8", newline="\n")
 
     def load_settings(self) -> Settings:
         try:

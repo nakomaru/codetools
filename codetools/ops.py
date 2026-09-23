@@ -4,8 +4,9 @@ from typing import Any
 QUERY_VERBS = frozenset({"read", "grep", "find", "tree", "outline"})
 CHANGE_VERBS = frozenset({"edit", "write", "overwrite", "patch", "move", "copy", "delete", "mkdir"})
 COMMAND_VERBS = frozenset({"run"})
-BODY_VERBS = frozenset({"edit", "write", "overwrite", "patch"})
-ALL_VERBS = QUERY_VERBS | CHANGE_VERBS | COMMAND_VERBS
+MESSAGE_VERB = "message"
+BODY_VERBS = frozenset({"edit", "write", "overwrite", "patch", MESSAGE_VERB})
+ALL_VERBS = QUERY_VERBS | CHANGE_VERBS | COMMAND_VERBS | {MESSAGE_VERB}
 
 
 @dataclass

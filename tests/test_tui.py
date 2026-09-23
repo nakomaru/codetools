@@ -43,7 +43,8 @@ def test_watch_ingests_copies_report_and_applies_partially(project, monkeypatch)
         async with app.run_test() as pilot:
             clip.text = "\n".join(["=== batch", "=== edit a.py", "<<<<<<< SEARCH", "x = 1", "=======", "x = 10",
                                    ">>>>>>> REPLACE", "=== edit a.py", "<<<<<<< SEARCH", "z = 3", "=======",
-                                   "z = 4", ">>>>>>> REPLACE", "=== end"])
+                                   "z = 4", ">>>>>>> REPLACE", "=== message", "Bump x",
+                                   "=== end"])
             await wait_for(lambda: clip.text.startswith("[codetools] batch 1: preflight 1 of 2"), pilot)
             report = clip.text
 

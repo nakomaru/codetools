@@ -1,3 +1,4 @@
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -6,8 +7,9 @@ from codetools import batch as states
 from codetools.engine import Engine, EngineError, StaleBatch
 
 
-def batch(*lines: str) -> str:
-    return "\n".join(["````", "=== batch", *lines, "=== end", "````"])
+def batch(*lines: str, message: str | None = "Test batch") -> str:
+    tail = ["=== message", message] if message is not None else []
+    return "\n".join(["````", "=== batch", *lines, *tail, "=== end", "````"])
 
 
 def ingest(engine: Engine, text: str, force: bool = False):
@@ -95,7 +97,7 @@ def test_undo_restores_everything(project):
     e.apply(b.id, partial=False)
     assert not (project / "src" / "win.py").exists()
     report = e.undo(b.id)
-    assert "3 files restored" in report and "Commands it ran were not reversed." in report
+    assert "3 files returned to their state before it was applied" in report
     assert "- src/app.py: restored" in report and "- src/win.py: restored" in report
     assert "- src/extra/new.py: removed (the batch created it)" in report
     assert (project / "src" / "app.py").read_bytes() == before_app
@@ -160,8 +162,8 @@ def test_reply_and_reports_are_kept_per_batch(project):
     d = project / ".codetools" / "batches" / "0001"
     assert (d / "reply.txt").read_text("utf-8").startswith("Some prose.")
     assert {p.name for p in d.iterdir()} >= {"reply.txt", "report-preflight.txt", "report-applied.txt",
-                                            "manifest.json", "before"}
-    assert (project / ".codetools" / ".gitignore").read_text("utf-8") == "batches/\nlog.txt\n"
+                                            "history.json"}
+    assert (project / ".codetools" / ".gitignore").read_text("utf-8") == "batches/\nlog.txt\nhistory.git/\n"
 
 
 def test_context_includes_protocol_notes_tree_and_pins(project):
@@ -295,3 +297,47 @@ def test_reject_copies_operator_note(project):
     assert "Operator note: use the existing helper instead" in b.report
     with pytest.raises(EngineError, match="rejected, not pending"):
         e.apply(b.id, partial=False)
+
+
+def history_log(project: Path) -> list[str]:
+    git_dir = project / ".codetools" / "history.git"
+    out = subprocess.run(["git", f"--git-dir={git_dir}", "log", "--format=%s"], capture_output=True, check=True)
+    return out.stdout.decode("utf-8").splitlines()
+
+
+def test_undo_reverses_what_commands_did(project):
+    e = Engine(project)
+    b = ingest(e, batch("=== write out.txt", "hello",
+                        "=== run mv src/win.py src/moved.py && echo made > gen.txt && echo NEW=1 >> .env",
+                        message="Move win.py\n\nAnd generate gen.txt."))
+    e.apply(b.id, partial=False)
+    assert (project / "src" / "moved.py").exists() and (project / "gen.txt").exists()
+    report = e.undo(b.id)
+    assert "- src/moved.py: removed (the batch created it)" in report
+    assert "- src/win.py: restored (the batch deleted it)" in report
+    assert "batch 1 (Move win.py) undone" in report
+    assert (project / "src" / "win.py").read_bytes() == b"a = 1\r\nb = 2\r\n"
+    assert (project / ".env").read_text("utf-8") == "TOKEN=secret\n"
+    assert not (project / "src" / "moved.py").exists() and not (project / "gen.txt").exists()
+    assert not (project / "out.txt").exists()
+
+
+def test_history_has_a_commit_per_batch_and_for_edits_between_them(project):
+    e = Engine(project)
+    first = ingest(e, batch(*edit("src/app.py", ["    print('hi')"], ["    print('yo')"]), message="Say yo"))
+    e.apply(first.id, partial=False)
+    (project / "notes.txt").write_text("by hand\n", "utf-8")
+    second = ingest(e, batch("=== write lib.py", "x = 1", message="Add lib.py"))
+    e.apply(second.id, partial=False)
+    e.undo(first.id)
+    assert history_log(project) == ["Undo batch 1: Say yo", "Add lib.py", "Project state before batch 2", "Say yo",
+                                    "Project state before batch 1"]
+    assert "yo" not in (project / "src" / "app.py").read_text("utf-8")
+    assert (project / "lib.py").exists() and (project / "notes.txt").exists()
+
+
+def test_existing_state_gitignore_gains_the_history_entry(project):
+    (project / ".codetools").mkdir()
+    (project / ".codetools" / ".gitignore").write_text("batches/\nlog.txt\n", "utf-8")
+    Engine(project)
+    assert (project / ".codetools" / ".gitignore").read_text("utf-8") == "batches/\nlog.txt\nhistory.git/\n"
