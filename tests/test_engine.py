@@ -195,7 +195,7 @@ def test_reports_fold_their_body_and_end_with_room_to_type(project):
     head, rest = b.report.split("\n", 1)
     assert head.startswith("[codetools] batch 1: 1 query, done.")
     assert rest.startswith("````\n") and rest.endswith("\n````\n\n\n")
-    assert "Reply with one batch" not in b.report
+    assert "The operator's task follows." not in b.report
     assert "\n```\n    1| def main():" in rest
 
 
@@ -207,13 +207,13 @@ def test_context_starts_with_the_environment(project):
     assert set(fence) == {"`"} and len(fence) >= 5
     assert f"- Project root: `{project}`. Every path in a batch is relative to it" in ctx.text
     assert "- Local time: " in ctx.text and "(UTC" in ctx.text
-    assert ctx.text.endswith(f"{fence}\n\nThe operator's task follows. Reply with one batch.\n\n\n")
+    assert ctx.text.endswith(f"{fence}\n\nThe operator's task follows.\n\n\n")
 
 
 def test_settings_are_read_from_the_project(project):
     (project / ".codetools").mkdir()
-    (project / ".codetools" / "settings.toml").write_text(
-        "[context]\ninclude_protocol = false\ntree_line_counts = false\n[secrets]\nextra_patterns = ['*.sqlite']\n",
+    (project / ".codetools" / "settings.yaml").write_text(
+        "context:\n  include_protocol: false\n  tree_line_counts: false\nsecrets:\n  extra_patterns: ['*.sqlite']\n",
         "utf-8")
     (project / "data.sqlite").write_text("rows\n", "utf-8")
     e = Engine(project)

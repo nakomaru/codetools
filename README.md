@@ -21,7 +21,7 @@ directory as the project root, or takes a path: `ct C:\code\myproject`.
 
 | file | purpose | commit it? |
 | --- | --- | --- |
-| `settings.toml` | context contents, command timeout, extra secret patterns | yes |
+| `settings.yaml` | context contents, command timeout, extra secret patterns | yes |
 | `pins.txt` | files the context always includes in full | yes |
 | `notes.md` | a project brief for the bot: what it is, conventions, how to test | yes |
 | `.gitignore` | keeps `batches/` and `log.txt` out of git | yes |
@@ -36,7 +36,7 @@ directory as the project root, or takes a path: `ct C:\code\myproject`.
 - `notes.md`;
 - the git branch, uncommitted changes, and recent commits;
 - the project tree with a line count beside every file;
-- outlines of anything listed under `outline` in `settings.toml`;
+- outlines of anything listed under `outline` in `settings.yaml`;
 - every pinned file in full, with line numbers.
 
 Open a new chat, paste it, and type your task below it. Pin the files the bot will need nearly every time,
@@ -83,7 +83,7 @@ Every report is self-contained, so always paste only the latest one.
 Every copy (reports, `context`, `protocol`) has the same shape: a one-line headline, then the body inside a
 code fence. Chat UIs that collapse code blocks, such as AI Studio, fold the body so long pastes stay compact.
 The fence is always longer than any fence inside the body. Each copy ends with blank lines, so after pasting
-you can keep typing below it. Set `fold = false` under `[clipboard]` in `settings.toml` for plain text
+you can keep typing below it. Set `fold: false` under `clipboard:` in `settings.yaml` for plain text
 instead.
 
 ## How a batch is read
@@ -156,7 +156,13 @@ projects.
 
 ## Development
 
+Run the tests with the venv's interpreter, after `ct` has run once to create the venv:
+
 ```
-pip install -r requirements-dev.txt
-python -m pytest
+~/venvs/.venv_codetools/Scripts/python -m pip install -r requirements-dev.txt
+~/venvs/.venv_codetools/Scripts/python -m pytest
 ```
+
+`ct` puts a `.pth` file in the venv that sends that interpreter's bytecode to the venv's `pycache/` folder,
+and `pyproject.toml` sends pytest's cache to the venv's `pytest_cache/` folder, so neither `__pycache__` nor
+`.pytest_cache` appears in the repo. `ct` deletes any that another interpreter leaves behind.

@@ -19,7 +19,7 @@ PROTOCOL_PATH = Path(__file__).with_name("PROTOCOL.md")
 _GLOB_CHARS = set("*?[{")
 _GIT_STATUS_MAX_LINES = 50
 _GIT_LOG_COUNT = 8
-_TAIL = "The operator's task follows. Reply with one batch."
+_TAIL = "The operator's task follows."
 
 
 @dataclass

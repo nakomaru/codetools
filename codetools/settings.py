@@ -1,35 +1,36 @@
 """Per-project settings, pins, and notes, kept in .codetools/ beside the batch history.
 
-settings.toml, pins.txt, and notes.md are meant to be committed; .codetools/.gitignore keeps the batch history
+settings.yaml, pins.txt, and notes.md are meant to be committed; .codetools/.gitignore keeps the batch history
 and log out of git.
 """
 
 import re
-import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+
+import yaml
 
 SETTINGS_TEMPLATE = """\
 # codetools settings for this project. Read when ct starts; restart ct after editing.
 
-[context]
-# What the `context` command copies for the start of a chat.
-include_protocol = true    # the batch format instructions
-include_git = true         # branch, uncommitted changes, recent commits
-tree_depth = 4             # directory levels shown in the project tree
-tree_line_counts = true    # line count beside each file in trees
-outline = []               # files, directories, or globs whose outlines (classes, functions, headings) are included
+context:
+  # What the `context` command copies for the start of a chat.
+  include_protocol: true    # the batch format instructions
+  include_git: true         # branch, uncommitted changes, recent commits
+  tree_depth: 4             # directory levels shown in the project tree
+  tree_line_counts: true    # line count beside each file in trees
+  outline: []               # files, directories, or globs whose outlines (classes, functions, headings) are included
 
-[clipboard]
-fold = true                # wrap the body of every copy in a code fence, so chat UIs can collapse it
+clipboard:
+  fold: true                # wrap the body of every copy in a code fence, so chat UIs can collapse it
 
-[commands]
-timeout_seconds = 300      # a run op is killed, with everything it started, after this long
+commands:
+  timeout_seconds: 300      # a run op is killed, with everything it started, after this long
 
-[secrets]
-# Basename patterns added to the built-in list (.env, .env.*, *.pem, *.key, id_rsa*, ...).
-# Matching files are never read, grepped, or edited.
-extra_patterns = []
+secrets:
+  # Basename patterns added to the built-in list (.env, .env.*, *.pem, *.key, id_rsa*, ...).
+  # Matching files are never read, grepped, or edited.
+  extra_patterns: []
 """
 
 PINS_TEMPLATE = """\
@@ -68,7 +69,7 @@ class ProjectState:
 
     def __init__(self, state_dir: Path):
         self.dir = state_dir
-        self.settings_path = state_dir / "settings.toml"
+        self.settings_path = state_dir / "settings.yaml"
         self.pins_path = state_dir / "pins.txt"
         self.notes_path = state_dir / "notes.md"
 
@@ -85,15 +86,17 @@ class ProjectState:
 
     def load_settings(self) -> Settings:
         try:
-            data = tomllib.loads(self.settings_path.read_text(encoding="utf-8"))
+            data = yaml.safe_load(self.settings_path.read_text(encoding="utf-8")) or {}
         except FileNotFoundError:
             return Settings()
-        except tomllib.TOMLDecodeError as e:
+        except yaml.YAMLError as e:
             raise SettingsError(f"{self.settings_path}: {e}") from None
-        context, commands, secrets = data.get("context", {}), data.get("commands", {}), data.get("secrets", {})
-        clip = data.get("clipboard", {})
         s = Settings()
         try:
+            if not isinstance(data, dict):
+                raise TypeError("the top level must be a mapping of sections")
+            context, commands, secrets, clip = (_section(data, name) for name in
+                                                ("context", "commands", "secrets", "clipboard"))
             s.include_protocol = _typed(context, "include_protocol", bool, s.include_protocol)
             s.include_git = _typed(context, "include_git", bool, s.include_git)
             s.tree_depth = _typed(context, "tree_depth", int, s.tree_depth)
@@ -135,6 +138,13 @@ class ProjectState:
         if not self.notes_path.is_file():
             return ""
         return _COMMENT_RE.sub("", self.notes_path.read_text(encoding="utf-8")).strip()
+
+
+def _section(data: dict, name: str) -> dict:
+    section = data.get(name) or {}
+    if not isinstance(section, dict):
+        raise TypeError(f"{name} must be a mapping of settings")
+    return section
 
 
 def _typed(section: dict, key: str, kind, default):

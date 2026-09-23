@@ -1,3 +1,4 @@
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+cache_dir = "~/venvs/.venv_codetools/pytest_cache"
