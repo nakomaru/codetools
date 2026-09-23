@@ -100,9 +100,11 @@ def operator_rejected(b: Batch, note: str) -> str:
     return _finish(lines + ([f"Operator note: {note}"] if note else []))
 
 
-def undone(batch_id: int, count: int) -> str:
-    return _finish([f"{_TAG} batch {batch_id} undone: {plural(count, 'file')} restored to their state before it "
-                    "was applied."])
+def undone(batch_id: int, files: list[tuple[str, bool]]) -> str:
+    lines = [f"{_TAG} batch {batch_id} undone by the operator: {plural(len(files), 'file')} restored to their state "
+             "before it was applied. Commands it ran were not reversed.", ""]
+    lines += [f"- {rel}: {'restored' if existed else 'removed (the batch created it)'}" for rel, existed in files]
+    return _finish(lines)
 
 
 def _finish(lines: list[str]) -> str:

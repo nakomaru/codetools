@@ -60,7 +60,8 @@ def apply_stage(ws: Workspace, stage: Stage, batch_dir: Path) -> dict:
     return manifest
 
 
-def undo(ws: Workspace, batch_dir: Path) -> int:
+def undo(ws: Workspace, batch_dir: Path) -> list[tuple[str, bool]]:
+    """Each file the batch changed, with whether it existed before the batch."""
     manifest_path = batch_dir / "manifest.json"
     if not manifest_path.is_file():
         raise ApplyError("that batch was never applied")
@@ -80,7 +81,7 @@ def undo(ws: Workspace, batch_dir: Path) -> int:
     manifest["undone"] = True
     manifest["undone_at"] = timestamp()
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    return len(entries)
+    return [(e["path"], e["existed"]) for e in entries]
 
 
 def _read(ws: Workspace, rel: str) -> bytes | None:

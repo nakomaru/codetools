@@ -205,17 +205,17 @@ class Engine:
     def undo(self, batch_id: int) -> str:
         with self._lock:
             try:
-                count = applier.undo(self.ws, self._dir(batch_id))
+                files = applier.undo(self.ws, self._dir(batch_id))
             except applier.ApplyError as e:
                 raise EngineError(f"can't undo batch {batch_id}: {e}") from None
             self.ws.invalidate()
-            text = report.package(report.undone(batch_id, count), self.settings.fold)
+            text = report.package(report.undone(batch_id, files), self.settings.fold)
             b = self.batches.get(batch_id)
             if b is not None:
                 b.status = states.UNDONE
                 b.report = text
             self._save_text(batch_id, "report-undone.txt", text)
-            self._log_line(f"batch {batch_id} undone: {count} files restored")
+            self._log_line(f"batch {batch_id} undone: {len(files)} files restored")
             return text
 
     def pending_ids(self) -> list[int]:

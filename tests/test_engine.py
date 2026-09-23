@@ -95,7 +95,9 @@ def test_undo_restores_everything(project):
     e.apply(b.id, partial=False)
     assert not (project / "src" / "win.py").exists()
     report = e.undo(b.id)
-    assert "3 files restored" in report
+    assert "3 files restored" in report and "Commands it ran were not reversed." in report
+    assert "- src/app.py: restored" in report and "- src/win.py: restored" in report
+    assert "- src/extra/new.py: removed (the batch created it)" in report
     assert (project / "src" / "app.py").read_bytes() == before_app
     assert (project / "src" / "win.py").read_bytes() == b"a = 1\r\nb = 2\r\n"
     assert not (project / "src" / "extra").exists()

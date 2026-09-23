@@ -95,6 +95,20 @@ that file contents can contain ``` fences. Inside it:
   corrected against the files as the report describes them.
 - Never assume anything ran until a report says so.
 
+## Rejecting and undoing
+
+- The operator can reject a batch instead of applying it, sometimes with a note. Nothing in it was applied
+  or run; follow the note.
+- The operator can undo an applied batch. Every file it changed goes back to its exact state before the
+  batch, and files it created are removed. The undo report lists each file. Commands the batch ran are not
+  reversed; if their effects matter, undo them with `run` ops.
+- Undo refuses while a later batch or the operator has changed the same files, so undoing an older batch
+  usually means undoing the newer ones first. After an undo, don't trust your memory of those files: read
+  them again before editing.
+- You can ask for an undo. When an applied batch went wrong (broke the build, took the wrong approach),
+  write `undo N` for the operator in plain text instead of sending edits that reverse it by hand, and send
+  no batch in that reply. Wait for the undo report, then send the next batch.
+
 # Rules
 
 - Read before you edit. SEARCH text must match the file exactly. Never copy the `   12| ` line-number prefixes
