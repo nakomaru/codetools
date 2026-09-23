@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+py="$HOME/venvs/.venv_codetools/Scripts/python.exe"
+[ -f "$py" ] || py="$HOME/venvs/.venv_codetools/bin/python"
+[ -f "$py" ] || py=python
+exec "$py" "$here/../ct.py" "$@"

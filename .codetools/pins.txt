@@ -1,0 +1,2 @@
+# Files the `context` command includes in full, one path or glob per line.
+# Manage with `pin PATH` and `unpin PATH`, or edit this file.

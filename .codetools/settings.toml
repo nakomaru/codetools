@@ -1,0 +1,16 @@
+# codetools settings for this project. Read when ct starts; restart ct after editing.
+
+[context]
+# What the `context` command copies for the start of a chat.
+include_protocol = true    # the batch format instructions
+include_git = true         # branch, uncommitted changes, recent commits
+tree_depth = 4             # directory levels shown in the project tree
+tree_line_counts = true    # line count beside each file in trees
+
+[commands]
+timeout_seconds = 300      # a run op is killed, with everything it started, after this long
+
+[secrets]
+# Basename patterns added to the built-in list (.env, .env.*, *.pem, *.key, id_rsa*, ...).
+# Matching files are never read, grepped, or edited.
+extra_patterns = []
