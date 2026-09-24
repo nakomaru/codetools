@@ -1,9 +1,9 @@
 # codetools (`ct`)
 
-Manual Claude Code for any web chatbot. The bot replies with a **batch** of ops (reads, greps, finds,
-edits, writes, moves, deletes, commands). You copy the reply, and codetools parses it, runs the read-only ops,
-preflights every change against the real files, and copies one report back to your clipboard for you to
-paste into the chat. Files change and commands run only when you type `apply N` or `applypartial N`.
+Work on a local codebase through any web chatbot. The bot replies with a **batch** of ops (reads, greps,
+finds, edits, writes, moves, deletes, commands). You copy the reply, and codetools parses it, runs the
+read-only ops, preflights every change against the real files, and copies one report back to your clipboard
+for you to paste into the chat. Files change and commands run only when you type `apply N` or `applypartial N`.
 
 ## Install
 
