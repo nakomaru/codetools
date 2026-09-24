@@ -17,7 +17,7 @@ from .watchlock import WatchLock
 
 HELP = """\
 start of a chat:
-  context            copy protocol + project notes + git state + tree + pinned files
+  context            copy protocol + git state + tree + pinned files
   pin PATH|GLOB      include a file in full in `context` (unpin PATH, pins to list)
   protocol           copy only the bot instructions
 batches (the id is required, so an apply always names what you reviewed):

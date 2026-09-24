@@ -10,6 +10,15 @@ paste into the chat. Files change and commands run only when you type `apply N` 
 Put this repo's `bin/` folder on PATH. It holds `ct.cmd` for PowerShell and cmd, and `ct` for Git Bash.
 Both find `ct.py` relative to themselves, so the repo can live anywhere.
 
+`ct` needs Python 3.11 or later, the oldest version `pygit2` ships wheels for, and nothing else. Git for Windows is optional:
+
+- History snapshots, `undo`, file listings, and the git section of the context run on libgit2 through
+  `pygit2`, which installs with the other requirements.
+- `run` ops use the shell `commands.shell` in `settings.yaml` names. `auto` picks bash (Git Bash on Windows,
+  found beside `git` or in the usual install folders), then PowerShell 7 (`pwsh`), then Windows PowerShell
+  (`powershell.exe`, present on every Windows 10 and 11 machine). The context tells the bot which shell it's
+  writing for, and for PowerShell, what to avoid.
+
 The first `ct` creates `~/venvs/.venv_codetools` and installs `requirements.txt` into it. Every later launch
 compares the file's hash with the one stored in the venv and reinstalls only when `requirements.txt` has
 changed. Versions are pinned, so dependencies change only when you edit that file. `ct` uses the current
@@ -23,7 +32,6 @@ directory as the project root, or takes a path: `ct C:\code\myproject`.
 | --- | --- | --- |
 | `settings.yaml` | context contents, command timeout, extra secret patterns | yes |
 | `pins.txt` | files the context always includes in full | yes |
-| `notes.md` | a project brief for the bot: what it is, conventions, how to test | yes |
 | `.gitignore` | keeps `batches/`, `log.txt`, and `history.git/` out of git | yes |
 | `batches/NNNN/` | every batch: the whole reply, each report, and its history snapshot ids | no |
 | `history.git/` | a private git repository of snapshots, one commit per applied batch | no |
@@ -34,14 +42,15 @@ directory as the project root, or takes a path: `ct C:\code\myproject`.
 - the environment: the full project root path (every batch path is relative to it, and `run` ops start
   there), local date, time, and UTC offset, the platform, and the shell `run` ops use;
 - the protocol (how to write batches);
-- `notes.md`;
 - the git branch, uncommitted changes, and recent commits;
 - the project tree with a line count beside every file;
 - outlines of anything listed under `outline` in `settings.yaml`;
 - every pinned file in full, with line numbers.
 
-Open a new chat, paste it, and type your task below it. Pin the files the bot will need nearly every time,
-such as the main module, the config, or a README with conventions (`pin src/app.py`, `pin 'docs/*.md'`).
+Open a new chat, paste it, and type your task below it. Pin the files the bot will need nearly every time.
+Start with the project's brief: what it is, its conventions, and how to run the tests, usually a README,
+`AGENTS.md`, or `CLAUDE.md` (`pin AGENTS.md`). Add the main module or the config if most tasks touch them
+(`pin src/app.py`, `pin 'docs/*.md'`).
 Leave everything else for the bot to read on demand, since the tree tells it what exists and how big
 each file is. `pins` shows what the pins currently resolve to.
 
@@ -85,11 +94,14 @@ you make between batches get their own commits, so the history is complete:
 git --git-dir=.codetools/history.git log --stat
 ```
 
+That needs git installed; `ct` itself doesn't.
+
 `undo 14` puts back every file batch 14 changed, including moves, deletes, and files its commands created or
 changed. It refuses if something changed those files since, including a later batch or your own edits; undo
 the later batch first. The snapshots follow the project's `.gitignore`, so ignored files (build output,
-`node_modules`) and anything outside the project, such as installed packages, can't be undone. Your real
-repository is never touched.
+`node_modules`) and anything outside the project, such as installed packages, can't be undone. In a folder
+that isn't a git repository, snapshots and listings also leave out `node_modules`, `venv`, `.venv`, `build`,
+`dist`, and cache folders. Your real repository is never touched.
 
 Every report is self-contained, so always paste only the latest one.
 
@@ -131,7 +143,7 @@ says why a SEARCH missed:
 
 | command | effect |
 | --- | --- |
-| `context` | copy protocol + notes + git state + tree + pinned files |
+| `context` | copy protocol + git state + tree + pinned files |
 | `pin PATH\|GLOB`, `unpin`, `pins` | manage the files `context` includes |
 | `protocol` | copy only the batch format instructions |
 | `apply N` / `applypartial N` | apply batch N (every op must pass / the passing ops only) |
@@ -163,8 +175,9 @@ projects.
 - Before applying, `ct` checks that every file it's about to touch is unchanged since preflight. If one
   changed, the batch is re-preflighted and you review it again.
 - The project is snapshotted before every batch is applied, and a failed write rolls back the whole batch.
-- Commands run in Git Bash in the project root with no stdin, pagers off, and the timeout from settings. On
-  Windows each command runs in a Job Object, so a timeout or `kill` also stops every process it started.
+- Commands run in the project root, in the shell `commands.shell` picks, with no stdin, pagers off, and the
+  timeout from settings. On Windows each command runs in a Job Object, so a timeout or `kill` also stops
+  every process it started.
 
 ## Development
 

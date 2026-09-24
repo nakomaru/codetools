@@ -1,7 +1,7 @@
-"""Per-project settings, pins, and notes, kept in .codetools/ beside the batch history.
+"""Per-project settings and pins, kept in .codetools/ beside the batch history.
 
-settings.yaml, pins.txt, and notes.md are meant to be committed; .codetools/.gitignore keeps the batch history
-and log out of git.
+settings.yaml and pins.txt are meant to be committed; .codetools/.gitignore keeps the batch history and log out
+of git.
 """
 
 import re
@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
+
+from .commands import SHELL_CHOICES
 
 SETTINGS_TEMPLATE = """\
 # codetools settings for this project. Read when ct starts; restart ct after editing.
@@ -26,6 +28,7 @@ clipboard:
 
 commands:
   timeout_seconds: 300      # a run op is killed, with everything it started, after this long
+  shell: auto               # auto (bash or Git Bash, then pwsh, then Windows PowerShell), bash, or powershell
 
 secrets:
   # Basename patterns added to the built-in list (.env, .env.*, *.pem, *.key, id_rsa*, ...).
@@ -36,11 +39,6 @@ secrets:
 PINS_TEMPLATE = """\
 # Files the `context` command includes in full, one path or glob per line.
 # Manage with `pin PATH` and `unpin PATH`, or edit this file.
-"""
-
-NOTES_TEMPLATE = """\
-<!-- Project notes that the `context` command sends to the bot: what the project is, conventions,
-     how to run the tests, things to avoid. HTML comments like this one are not sent. -->
 """
 
 GITIGNORE = "batches/\nlog.txt\nhistory.git/\n"
@@ -61,6 +59,7 @@ class Settings:
     outline: list[str] = field(default_factory=list)
     fold: bool = True
     timeout_seconds: float = 300
+    shell: str = "auto"
     extra_secret_patterns: list[str] = field(default_factory=list)
 
 
@@ -78,7 +77,7 @@ class ProjectState:
         self.dir.mkdir(parents=True, exist_ok=True)
         created = []
         for path, text in ((self.settings_path, SETTINGS_TEMPLATE), (self.pins_path, PINS_TEMPLATE),
-                           (self.notes_path, NOTES_TEMPLATE), (self.dir / ".gitignore", GITIGNORE)):
+                           (self.dir / ".gitignore", GITIGNORE)):
             if not path.exists():
                 path.write_text(text, encoding="utf-8", newline="\n")
                 created.append(path.name)
@@ -115,6 +114,9 @@ class ProjectState:
             s.outline = _typed(context, "outline", list, s.outline)
             s.fold = _typed(clip, "fold", bool, s.fold)
             s.timeout_seconds = _typed(commands, "timeout_seconds", (int, float), s.timeout_seconds)
+            s.shell = _typed(commands, "shell", str, s.shell)
+            if s.shell not in SHELL_CHOICES:
+                raise TypeError(f"commands.shell must be one of {', '.join(SHELL_CHOICES)}, not {s.shell!r}")
             s.extra_secret_patterns = _typed(secrets, "extra_patterns", list, s.extra_secret_patterns)
         except TypeError as e:
             raise SettingsError(f"{self.settings_path}: {e}") from None
@@ -145,10 +147,11 @@ class ProjectState:
         self.pins_path.write_text("\n".join(kept) + "\n", encoding="utf-8", newline="\n")
         return True
 
-    def notes(self) -> str:
+    def has_unread_notes(self) -> bool:
+        """Whether .codetools/notes.md, which nothing reads, holds anything besides HTML comments."""
         if not self.notes_path.is_file():
-            return ""
-        return _COMMENT_RE.sub("", self.notes_path.read_text(encoding="utf-8")).strip()
+            return False
+        return bool(_COMMENT_RE.sub("", self.notes_path.read_text(encoding="utf-8")).strip())
 
 
 def _section(data: dict, name: str) -> dict:

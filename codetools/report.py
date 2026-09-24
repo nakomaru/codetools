@@ -107,8 +107,8 @@ _UNDO_STATUS = {"A": "removed (the batch created it)", "D": "restored (the batch
 def undone(batch_id: int, message: str, files: list[FileStatus]) -> str:
     subject = message.split("\n", 1)[0]
     lines = [f"{_TAG} batch {batch_id} ({subject}) undone by the operator: {plural(len(files), 'file')} returned to "
-             "their state before it was applied, including changes its commands made. Files ignored by .gitignore "
-             "and anything outside the project were not reversed.", ""]
+             "their state before it was applied, including changes its commands made. Ignored files and anything "
+             "outside the project were not reversed.", ""]
     lines += [f"- {f.path}: {_UNDO_STATUS.get(f.status, 'restored')}" for f in files]
     return _finish(lines)
 

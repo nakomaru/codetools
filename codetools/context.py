@@ -1,12 +1,11 @@
-"""The start-of-chat dump: environment, protocol, project notes, git state, project tree, outlines, and pinned
-files in full."""
+"""The start-of-chat dump: environment, protocol, git state, project tree, outlines, and pinned files in full."""
 
 import platform
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from .commands import find_bash
+from .commands import find_shell
 from .globmatch import matches
 from .outline import supported
 from .queries import outline_files, read_whole, render_tree
@@ -69,9 +68,6 @@ def build(ws: Workspace, state: ProjectState) -> Context:
     sections = [_environment(ws)]
     if s.include_protocol:
         sections.append(protocol_text().strip())
-    notes = state.notes()
-    if notes:
-        sections.append("# Project notes\n\n" + notes)
     if s.include_git and ws.git:
         sections.append("# Git\n\n" + fence(_git_summary(ws)))
     tree, count, tree_notes = render_tree(ws, ".", s.tree_depth)
@@ -109,23 +105,19 @@ def build(ws: Workspace, state: ProjectState) -> Context:
 def _environment(ws: Workspace) -> str:
     now = datetime.now().astimezone()
     offset = now.strftime("%z")
-    bash = find_bash()
+    shell = find_shell(ws.settings.shell)
     lines = [
         "# Environment",
         "",
         f"- Project root: `{ws.root}`. Every path in a batch is relative to it, and run ops start in it.",
         f"- Local time: {now:%Y-%m-%d %H:%M} {now:%A} (UTC{offset[:3]}:{offset[3:]})",
         f"- Platform: {platform.system()} {platform.release()} ({platform.version()})",
-        f"- run ops execute in: {'Git Bash' if bash else 'no bash found'}",
+        f"- run ops execute in: {shell.name if shell else 'no shell found, so run ops fail'}",
+        *([f"  {shell.guidance()}"] if shell and shell.guidance() else []),
         f"- Git: {'repository; state below' if ws.git else 'not a git repository'}",
     ]
     return "\n".join(lines)
 
 
 def _git_summary(ws: Workspace) -> str:
-    status = ws.run_git("status", "--short", "--branch").stdout.decode("utf-8", errors="replace").splitlines()
-    if len(status) > _GIT_STATUS_MAX_LINES:
-        status = status[:_GIT_STATUS_MAX_LINES] + [f"... {len(status) - _GIT_STATUS_MAX_LINES} more changed paths"]
-    log = ws.run_git("log", "--oneline", f"-{_GIT_LOG_COUNT}").stdout.decode("utf-8", errors="replace").strip()
-    return "\n".join(["$ git status --short --branch", *status, "", f"$ git log --oneline -{_GIT_LOG_COUNT}",
-                      log or "(no commits)"])
+    return ws.repo.summary(_GIT_STATUS_MAX_LINES, _GIT_LOG_COUNT)

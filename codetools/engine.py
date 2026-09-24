@@ -14,9 +14,9 @@ from pathlib import Path
 from . import applier, batch as states, context, report
 from .batch import Batch
 from .changes import preflight
-from .commands import CommandResult, Runner, find_bash
+from .commands import CommandResult, Runner, find_shell
 from .diffs import file_changes
-from .history import History, HistoryError
+from .history import HistoryError
 from .ops import OpResult
 from .protocol import parse
 from .queries import run_query
@@ -57,26 +57,29 @@ class Engine:
         self.settings = self.state.load_settings()
         self.ws = Workspace(root, self.settings)
         self.batches: dict[int, Batch] = {}
-        self.runner = Runner()
+        self.runner = Runner(self.settings.shell)
         self._seen: dict[str, int] = {}
         self._lock = threading.RLock()
         self._batches_dir = self.ws.state_dir / "batches"
-        self.history = History(root, self.ws.state_dir / "history.git")
+        self.history = self.ws.history
 
     @property
     def root(self) -> Path:
         return self.ws.root
 
     def startup_notes(self) -> list[str]:
-        bash = find_bash()
+        shell = find_shell(self.settings.shell)
         notes = [
             f"project root: {self.root}",
-            f"file listing: {'git (respects .gitignore)' if self.ws.git else 'directory walk'}",
-            f"commands run with: {bash or 'NOT FOUND (install Git for Windows); run ops will fail'}",
+            f"file listing: .gitignore rules, {'git repository' if self.ws.git else 'no git repository'}",
+            f"commands run with: {f'{shell.name}, {shell.path}' if shell else 'NO SHELL FOUND; run ops will fail'}",
         ]
         if self.created_state_files:
-            notes.append(f"created .codetools/ {', '.join(self.created_state_files)}: settings, pins, and notes "
-                         "for this project")
+            notes.append(f"created .codetools/ {', '.join(self.created_state_files)}: settings and pins for this "
+                         "project")
+        if self.state.has_unread_notes():
+            notes.append(".codetools/notes.md is no longer sent to the bot; move its contents into a project file, "
+                         "such as the README or AGENTS.md, and pin that")
         pins = self.state.pins()
         notes.append(f"pinned: {', '.join(pins) if pins else 'nothing (see `pin`)'}")
         return notes

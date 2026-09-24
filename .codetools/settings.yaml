@@ -9,6 +9,7 @@ context:
 
 commands:
   timeout_seconds: 300      # a run op is killed, with everything it started, after this long
+  shell: auto               # auto (bash or Git Bash, then pwsh, then Windows PowerShell), bash, or powershell
 
 secrets:
   # Basename patterns added to the built-in list (.env, .env.*, *.pem, *.key, id_rsa*, ...).

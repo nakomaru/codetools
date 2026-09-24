@@ -15,7 +15,7 @@ COMMAND_OUTPUT_TAIL_LINES = 300
 # Directory names never read, written, or listed.
 PROTECTED_DIRS = frozenset({".git", ".codetools"})
 
-# Directory names skipped when listing files outside a git work tree.
+# Directory names left out of listings and snapshots outside a git work tree, on top of .gitignore rules.
 WALK_SKIP_DIRS = frozenset(
     {".git", ".codetools", "node_modules", "__pycache__", ".venv", "venv", ".mypy_cache", ".pytest_cache",
      ".ruff_cache", "dist", "build"}

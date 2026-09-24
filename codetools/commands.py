@@ -22,32 +22,91 @@ class CommandResult:
     killed: bool = False
 
 
-@lru_cache(maxsize=1)
-def find_bash() -> str | None:
-    """Git Bash on Windows (never WSL's System32 bash), plain bash elsewhere."""
+SHELL_CHOICES = ("auto", "bash", "powershell")
+
+_POWERSHELL_PRELUDE = ("$ProgressPreference = 'SilentlyContinue'; "
+                       "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); "
+                       "$OutputEncoding = [Console]::OutputEncoding\n")
+# A PowerShell script's exit code only reports whether its last statement failed. This gives the exit code of a
+# failing native command, 1 for a failing cmdlet, and 0 otherwise, as bash does for its last command.
+_POWERSHELL_EPILOGUE = "\nif ($?) { exit 0 }\nif ($LASTEXITCODE) { exit $LASTEXITCODE }\nexit 1\n"
+
+
+@dataclass(frozen=True)
+class Shell:
+    name: str
+    path: str
+    powershell: bool = False
+
+    def argv(self, command: str) -> list[str]:
+        if not self.powershell:
+            return [self.path, "-c", command]
+        return [self.path, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+                _POWERSHELL_PRELUDE + command + _POWERSHELL_EPILOGUE]
+
+    def guidance(self) -> str:
+        """What the bot needs to know to write commands for this shell."""
+        if not self.powershell:
+            return ""
+        chaining = ("`&&` and `||` work" if self.name.startswith("PowerShell 7") else
+                    "no `&&` or `||`: chain with `;` and check `$LASTEXITCODE`")
+        return (f"PowerShell syntax, {chaining}. Unix tools such as grep, sed, and head don't exist. stderr is "
+                "already captured, so don't add `2>&1`.")
+
+
+@lru_cache(maxsize=None)
+def find_shell(preference: str = "auto") -> Shell | None:
+    """The shell run ops use. auto prefers bash (Git Bash on Windows), then PowerShell 7, then Windows
+    PowerShell."""
+    if preference in ("auto", "bash"):
+        bash = _find_bash()
+        if bash:
+            return Shell("Git Bash" if os.name == "nt" else "bash", bash)
+    if preference in ("auto", "powershell"):
+        return _find_powershell()
+    return None
+
+
+def _find_bash() -> str | None:
+    """Git Bash on Windows (never WSL's System32 bash), plain bash or sh elsewhere."""
     if os.name != "nt":
-        return shutil.which("bash") or "/bin/sh"
-    git = shutil.which("git")
-    if git:
-        for parent in Path(git).resolve().parents[:3]:
-            for candidate in (parent / "bin" / "bash.exe", parent / "usr" / "bin" / "bash.exe"):
-                if candidate.is_file():
-                    return str(candidate)
+        return shutil.which("bash") or shutil.which("sh")
+    roots = [parent for git in filter(None, [shutil.which("git")]) for parent in Path(git).resolve().parents[:3]]
+    installs = {"ProgramFiles": "Git", "ProgramW6432": "Git", "LOCALAPPDATA": "Programs/Git"}
+    roots += [Path(os.environ[var]) / sub for var, sub in installs.items() if var in os.environ]
+    for root in roots:
+        for candidate in (root / "bin" / "bash.exe", root / "usr" / "bin" / "bash.exe"):
+            if candidate.is_file():
+                return str(candidate)
+    return None
+
+
+def _find_powershell() -> Shell | None:
+    pwsh = shutil.which("pwsh")
+    if pwsh:
+        return Shell("PowerShell 7 (pwsh)", pwsh, powershell=True)
+    if os.name != "nt":
+        return None
+    system = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "WindowsPowerShell" / "v1.0"
+    windows = shutil.which("powershell") or str(system / "powershell.exe")
+    if Path(windows).is_file():
+        return Shell("Windows PowerShell (powershell.exe)", windows, powershell=True)
     return None
 
 
 class Runner:
     """Runs one command at a time and lets another thread kill it."""
 
-    def __init__(self):
+    def __init__(self, shell_preference: str = "auto"):
+        self.shell_preference = shell_preference
         self._proc: subprocess.Popen | None = None
         self._job = None
         self._killed = False
 
     def run(self, command: str, cwd: Path, timeout: float) -> CommandResult:
-        bash = find_bash()
-        if bash is None:
-            return CommandResult(None, "Git Bash not found; install Git for Windows", 0.0)
+        shell = find_shell(self.shell_preference)
+        if shell is None:
+            return CommandResult(None, f"no shell found for commands.shell: {self.shell_preference}", 0.0)
         env = dict(os.environ, GIT_PAGER="cat", PAGER="cat", GIT_TERMINAL_PROMPT="0")
         if os.name == "nt":
             flags = {"creationflags": subprocess.CREATE_NO_WINDOW | winjob.CREATE_SUSPENDED}
@@ -55,7 +114,7 @@ class Runner:
             flags = {"start_new_session": True}
         start = time.monotonic()
         self._killed = False
-        self._proc = subprocess.Popen([bash, "-c", command], cwd=cwd, env=env, stdin=subprocess.DEVNULL,
+        self._proc = subprocess.Popen(shell.argv(command), cwd=cwd, env=env, stdin=subprocess.DEVNULL,
                                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, **flags)
         if os.name == "nt":
             self._job = winjob.Job()

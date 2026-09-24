@@ -81,8 +81,8 @@ that file contents can contain ``` fences. Inside it:
 
     === run COMMAND
 
-- One command per `=== run` line, run with bash in the project root, no stdin, with a timeout. Nothing runs
-  interactively, so use non-interactive flags.
+- One command per `=== run` line, run in the project root by the shell the Environment section names, with
+  no stdin and a timeout. Nothing runs interactively, so use non-interactive flags.
 
 ## Message: the last op of a batch that changes anything
 
@@ -117,8 +117,9 @@ that file contents can contain ``` fences. Inside it:
   or run; follow the note.
 - The operator can undo an applied batch. Every file it changed, including files its commands changed,
   moved, or created, goes back to its exact state before the batch; files it created are removed. The undo
-  report lists each file. Files ignored by .gitignore and anything outside the project (installed packages,
-  for example) are not reversed; if those effects matter, undo them with `run` ops.
+  report lists each file. Files listings leave out (ignored ones, and outside a git repository, folders such
+  as node_modules and venv) and anything outside the project (installed packages, for example) are not
+  reversed; if those effects matter, undo them with `run` ops.
 - Undo refuses while a later batch or the operator has changed the same files, so undoing an older batch
   usually means undoing the newer ones first. After an undo, don't trust your memory of those files: read
   them again before editing.

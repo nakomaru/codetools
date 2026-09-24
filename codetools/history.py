@@ -3,27 +3,32 @@
 Every applied batch gets two snapshots: one just before its changes and one after its commands finish. The
 commit between them holds everything the batch did to files git sees, including what its commands did. Edits
 made between batches land in their own commits. The project's own .gitignore rules apply, so ignored files are
-never snapshotted. The project's real repository is never touched.
+never snapshotted, and neither are the excluded directories a History is given. The project's real repository is
+never touched.
+
+Runs on libgit2 through pygit2, so no git installation is needed. A snapshot records the same tree `git add
+--all` would: a nested repository becomes a gitlink to its HEAD commit, and tracked files stay tracked after
+they become ignored.
 """
 
-import os
-import subprocess
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
+import pygit2
+from pygit2.enums import CheckoutStrategy, FileMode, FileStatus as Status
+
+from .projectgit import work_tree_files
+
 _CONFIG = {
-    "core.bare": "false",
-    "core.autocrlf": "false",
-    "core.safecrlf": "false",
-    "core.quotepath": "false",
-    "core.longpaths": "true",
-    "core.fsmonitor": "false",
-    "commit.gpgsign": "false",
-    "user.name": "codetools",
-    "user.email": "codetools@localhost",
+    "core.bare": False,
+    "core.autocrlf": False,
+    "core.safecrlf": False,
+    "core.quotepath": False,
+    "core.longpaths": True,
 }
-_CLEARED_ENV = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
-                "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES")
+_SIGNATURE = ("codetools", "codetools@localhost")
+_WORKTREE_CHANGE = Status.WT_NEW | Status.WT_MODIFIED | Status.WT_DELETED | Status.WT_TYPECHANGE | Status.WT_RENAMED
 
 
 class HistoryError(Exception):
@@ -40,61 +45,90 @@ class FileStatus:
 
 
 class History:
-    def __init__(self, root: Path, git_dir: Path):
+    def __init__(self, root: Path, git_dir: Path, excluded_dirs: Iterable[str] = ()):
+        """excluded_dirs are directory names left out wherever they appear, unless already snapshotted."""
         self.root = root
         self.git_dir = git_dir
+        self._exclude = "/.codetools/\n" + "".join(f"{name}/\n" for name in sorted(excluded_dirs))
+
+    def files(self) -> list[str]:
+        """Every file the next snapshot would hold, relative to the project root."""
+        try:
+            return work_tree_files(self._repo(), self.root)
+        except (pygit2.GitError, OSError) as e:
+            raise HistoryError(f"can't list files through {self.git_dir}: {e}") from None
 
     def snapshot(self, message: str) -> str:
         """Commit the project as it is now and return the commit id. When nothing changed since the last
         snapshot, returns that snapshot's id without committing."""
-        self._ensure()
-        self._git("add", "--all", "--", ".")
-        head = self._head()
-        if head is not None and self._git("diff", "--cached", "--quiet", "HEAD", check=False).returncode == 0:
-            return head
-        self._git("commit", "--quiet", "--no-verify", "--allow-empty", "--file=-", input=message.encode("utf-8"))
-        return self._head()
+        try:
+            repo = self._repo()
+            tree = self._stage_all(repo)
+            head = None if repo.head_is_unborn else repo.head.peel(pygit2.Commit)
+            if head is not None and head.tree_id == tree:
+                return str(head.id)
+            signature = pygit2.Signature(*_SIGNATURE)
+            text = message if message.endswith("\n") else message + "\n"
+            return str(repo.create_commit("HEAD", signature, signature, text, tree, [head.id] if head else []))
+        except (pygit2.GitError, OSError) as e:
+            raise HistoryError(f"snapshot failed in {self.git_dir}: {e}") from None
 
     def changes(self, old: str, new: str) -> list[FileStatus]:
-        out = self._git("diff", "--name-status", "--no-renames", "-z", old, new).stdout.decode("utf-8")
-        fields = out.split("\0")
-        return [FileStatus(fields[i][0], fields[i + 1]) for i in range(0, len(fields) - 1, 2)]
+        try:
+            repo = self._repo()
+            diff = repo.diff(repo[old].peel(pygit2.Tree), repo[new].peel(pygit2.Tree))
+        except (pygit2.GitError, KeyError, ValueError) as e:
+            raise HistoryError(f"can't compare snapshots {old[:10]} and {new[:10]}: {e}") from None
+        return [FileStatus(d.status_char(), d.new_file.path) for d in diff.deltas]
 
     def restore(self, commit: str, files: list[FileStatus]) -> None:
         """Put each file back as it was in commit: files absent there are deleted, the rest checked out."""
         present = [f.path for f in files if f.status != "A"]
         if present:
-            self._git("checkout", commit, "--pathspec-from-file=-", "--pathspec-file-nul",
-                      input="\0".join(present).encode("utf-8"))
+            try:
+                repo = self._repo()
+                repo.checkout_tree(repo[commit].peel(pygit2.Tree), paths=present,
+                                   strategy=CheckoutStrategy.FORCE | CheckoutStrategy.DISABLE_PATHSPEC_MATCH)
+            except (pygit2.GitError, KeyError, OSError) as e:
+                raise HistoryError(f"restore from {commit[:10]} failed: {e}") from None
         for f in files:
             if f.status == "A":
                 (self.root / f.path).unlink(missing_ok=True)
 
-    def _head(self) -> str | None:
-        result = self._git("rev-parse", "--verify", "--quiet", "HEAD", check=False)
-        return result.stdout.decode().strip() if result.returncode == 0 else None
+    def _stage_all(self, repo: pygit2.Repository) -> pygit2.Oid:
+        """Bring the index up to date with the work tree and write it as a tree."""
+        index = repo.index
+        for path, flags in repo.status(untracked_files="all").items():
+            if not flags & _WORKTREE_CHANGE:
+                continue
+            if flags & Status.WT_DELETED:
+                index.remove(path)
+            elif path.endswith("/"):
+                path = path[:-1]
+                nested = pygit2.Repository(str(self.root / path))
+                if nested.head_is_unborn:
+                    continue
+                index.add(pygit2.IndexEntry(path, nested.head.target, FileMode.COMMIT))
+            else:
+                index.add(path)
+        index.write()
+        return index.write_tree()
 
-    def _ensure(self) -> None:
-        if (self.git_dir / "HEAD").is_file():
-            return
+    def _repo(self) -> pygit2.Repository:
+        if not (self.git_dir / "HEAD").is_file():
+            self._create()
+        exclude = self.git_dir / "info" / "exclude"
+        if not exclude.is_file() or exclude.read_text(encoding="utf-8") != self._exclude:
+            exclude.parent.mkdir(exist_ok=True)
+            exclude.write_text(self._exclude, encoding="utf-8")
+        repo = pygit2.Repository(str(self.git_dir))
+        repo.workdir = str(self.root)
+        return repo
+
+    def _create(self) -> None:
+        """A bare init followed by core.bare=false: git's configuration for a separate git dir, without the .git
+        file a non-bare init would write into the project."""
         self.git_dir.mkdir(parents=True, exist_ok=True)
-        self._git("init", "--quiet")
-        self._git("config", "--unset", "core.worktree", check=False)
+        repo = pygit2.init_repository(str(self.git_dir), bare=True)
         for key, value in _CONFIG.items():
-            self._git("config", key, value)
-        self._git("config", "core.hooksPath", str(self.git_dir / "hooks"))
-        (self.git_dir / "info").mkdir(exist_ok=True)
-        (self.git_dir / "info" / "exclude").write_text("/.codetools/\n", encoding="utf-8")
-
-    def _git(self, *args: str, input: bytes | None = None, check: bool = True) -> subprocess.CompletedProcess:
-        env = {k: v for k, v in os.environ.items() if k not in _CLEARED_ENV}
-        env["GIT_TERMINAL_PROMPT"] = "0"
-        cmd = ["git", "--literal-pathspecs", f"--git-dir={self.git_dir}", f"--work-tree={self.root}", *args]
-        try:
-            result = subprocess.run(cmd, cwd=self.root, env=env, input=input, capture_output=True)
-        except OSError as e:
-            raise HistoryError(f"can't run git ({e}); install Git for Windows") from None
-        if check and result.returncode != 0:
-            detail = result.stderr.decode("utf-8", errors="replace").strip() or f"exit {result.returncode}"
-            raise HistoryError(f"git {args[0]} failed in {self.git_dir}: {detail}")
-        return result
+            repo.config[key] = value

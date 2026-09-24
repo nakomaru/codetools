@@ -1,10 +1,10 @@
 import fnmatch
-import os
-import subprocess
 from pathlib import Path
 
 from . import config
+from .history import History
 from .paths import has_protected_part
+from .projectgit import open_repo
 from .settings import Settings
 
 
@@ -18,18 +18,10 @@ class Workspace:
         self.state_dir = self.root / ".codetools"
         self.settings = settings or Settings()
         self._secret_patterns = (*config.SECRET_PATTERNS, *(p.lower() for p in self.settings.extra_secret_patterns))
-        self.git = self._inside_git_work_tree()
+        self.repo = open_repo(self.root)
+        self.git = self.repo is not None
+        self.history = History(self.root, self.state_dir / "history.git", () if self.git else config.WALK_SKIP_DIRS)
         self._listing: list[str] | None = None
-
-    def run_git(self, *args: str) -> subprocess.CompletedProcess:
-        return subprocess.run(["git", "-C", str(self.root), *args], capture_output=True)
-
-    def _inside_git_work_tree(self) -> bool:
-        try:
-            result = self.run_git("rev-parse", "--is-inside-work-tree")
-        except OSError:
-            return False
-        return result.returncode == 0 and result.stdout.strip() == b"true"
 
     def abs(self, rel: str) -> Path:
         """Absolute path for a normalized relative path, refusing anything that resolves outside the root."""
@@ -57,9 +49,10 @@ class Workspace:
         self._listing = None
 
     def list_files(self) -> list[str]:
-        """Every non-ignored file in the project (git's view when inside a work tree), sorted."""
+        """Every non-ignored file in the project, sorted: the project repository's view inside a git work tree,
+        and the snapshot history's view outside one."""
         if self._listing is None:
-            files = self._git_listing() if self.git else self._walk_listing()
+            files = self.repo.files() if self.repo else self.history.files()
             self._listing = sorted(f for f in files if not has_protected_part(f))
         return self._listing
 
@@ -75,16 +68,3 @@ class Workspace:
         name = rel.rsplit("/", 1)[-1].lower()
         matches = [f for f in self.list_files() if f.rsplit("/", 1)[-1].lower() == name][:5]
         return f"; did you mean {', '.join(matches)}?" if matches else ""
-
-    def _git_listing(self) -> list[str]:
-        result = self.run_git("ls-files", "-z", "--cached", "--others", "--exclude-standard")
-        names = result.stdout.decode("utf-8", errors="replace").split("\0")
-        return [n for n in dict.fromkeys(names) if n and (self.root / n).is_file()]
-
-    def _walk_listing(self) -> list[str]:
-        files = []
-        for dirpath, dirnames, filenames in os.walk(self.root):
-            dirnames[:] = [d for d in dirnames if d not in config.WALK_SKIP_DIRS]
-            base = Path(dirpath)
-            files.extend(self.rel(base / name) for name in filenames)
-        return files

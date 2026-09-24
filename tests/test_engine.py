@@ -1,10 +1,14 @@
-import subprocess
 from pathlib import Path
 
+import pygit2
 import pytest
 
 from codetools import batch as states
+from codetools.commands import find_shell
 from codetools.engine import Engine, EngineError, StaleBatch
+
+
+requires_bash = pytest.mark.skipif(find_shell("bash") is None, reason="bash is not installed")
 
 
 def batch(*lines: str, message: str | None = "Test batch") -> str:
@@ -166,16 +170,15 @@ def test_reply_and_reports_are_kept_per_batch(project):
     assert (project / ".codetools" / ".gitignore").read_text("utf-8") == "batches/\nlog.txt\nhistory.git/\n"
 
 
-def test_context_includes_protocol_notes_tree_and_pins(project):
+def test_context_includes_protocol_tree_and_pins(project):
     e = Engine(project)
-    (project / ".codetools" / "notes.md").write_text("<!-- hidden -->\nRun tests with pytest.\n", "utf-8")
     assert e.pin("src/app.py") == "pinned src/app.py"
     assert e.pin("src/*.py") == "pinned src/*.py (2 files)"
     with pytest.raises(EngineError, match="matches no file"):
         e.pin("nope.py")
     ctx = e.context()
     assert ctx.pinned == ["src/app.py", "src/win.py"]
-    assert "=== batch" in ctx.text and "Run tests with pytest." in ctx.text and "hidden" not in ctx.text
+    assert "=== batch" in ctx.text
     assert "  src/\n    app.py (6 lines)\n    win.py (2 lines)" in ctx.text
     assert "## src/app.py (lines 1-6 of 6)" in ctx.text and "    6|     print('hi')" in ctx.text
     assert "TOKEN=secret" not in ctx.text
@@ -280,6 +283,7 @@ def test_patch_applies_by_content(project):
     assert (project / "src" / "made.py").read_text("utf-8") == "one\ntwo\n"
 
 
+@requires_bash
 def test_commands_run_after_changes(project):
     e = Engine(project)
     b = ingest(e, batch("=== write out.txt", "hello", "=== run cat out.txt && exit 3"))
@@ -300,11 +304,11 @@ def test_reject_copies_operator_note(project):
 
 
 def history_log(project: Path) -> list[str]:
-    git_dir = project / ".codetools" / "history.git"
-    out = subprocess.run(["git", f"--git-dir={git_dir}", "log", "--format=%s"], capture_output=True, check=True)
-    return out.stdout.decode("utf-8").splitlines()
+    repo = pygit2.Repository(str(project / ".codetools" / "history.git"))
+    return [commit.message.splitlines()[0] for commit in repo.walk(repo.head.target)]
 
 
+@requires_bash
 def test_undo_reverses_what_commands_did(project):
     e = Engine(project)
     b = ingest(e, batch("=== write out.txt", "hello",
@@ -341,3 +345,31 @@ def test_existing_state_gitignore_gains_the_history_entry(project):
     (project / ".codetools" / ".gitignore").write_text("batches/\nlog.txt\n", "utf-8")
     Engine(project)
     assert (project / ".codetools" / ".gitignore").read_text("utf-8") == "batches/\nlog.txt\nhistory.git/\n"
+
+
+def test_listing_outside_git_follows_gitignore_and_skips_tool_dirs(project):
+    (project / ".gitignore").write_text("*.log\n", "utf-8")
+    (project / "debug.log").write_text("ignored\n", "utf-8")
+    (project / "node_modules" / "pkg").mkdir(parents=True)
+    (project / "node_modules" / "pkg" / "index.js").write_text("x\n", "utf-8")
+    e = Engine(project)
+    assert e.ws.list_files() == [".env", ".gitignore", "src/app.py", "src/win.py"]
+
+
+def test_listing_inside_git_uses_only_gitignore(project):
+    pygit2.init_repository(str(project))
+    (project / "build").mkdir()
+    (project / "build" / "make.py").write_text("x\n", "utf-8")
+    e = Engine(project)
+    assert "build/make.py" in e.ws.list_files()
+
+
+def test_old_notes_file_is_flagged_only_when_it_has_content(project):
+    notes = project / ".codetools" / "notes.md"
+    notes.parent.mkdir()
+    notes.write_text("<!-- the old template -->\n", "utf-8")
+    assert not any("notes.md" in n for n in Engine(project).startup_notes())
+    notes.write_text("<!-- the old template -->\nRun tests with pytest.\n", "utf-8")
+    e = Engine(project)
+    assert any("notes.md is no longer sent" in n for n in e.startup_notes())
+    assert "Run tests with pytest." not in e.context().text
